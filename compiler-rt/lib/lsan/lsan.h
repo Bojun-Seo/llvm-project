@@ -32,6 +32,17 @@
   GET_STACK_TRACE(__sanitizer::common_flags()->malloc_context_size, \
                   common_flags()->fast_unwind_on_malloc)
 
+#define GET_STACK_TRACE_FREE GET_STACK_TRACE_MALLOC
+
+// Same as GET_STACK_TRACE_FREE, but unwinds from an explicit frame. The free
+// interceptors capture their stack in an out-of-line helper (see
+// lsan_allocator.h) and pass their own pc and bp along, so that the reported
+// stack starts at the intercepted function and not at the helper.
+#define GET_STACK_TRACE_FREE_AT(pc, bp)                                    \
+  __sanitizer::BufferedStackTrace stack;                                   \
+  stack.Unwind((pc), (bp), nullptr, common_flags()->fast_unwind_on_malloc, \
+               __sanitizer::common_flags()->malloc_context_size);
+
 #define GET_STACK_TRACE_THREAD GET_STACK_TRACE(kStackTraceMax, true)
 
 namespace __lsan {

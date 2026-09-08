@@ -1,0 +1,35 @@
+Add an opt-in check that reports a call to free() on an allocation that has
+already been freed, enabled with LSAN_OPTIONS=detect_double_free=1. It is off
+by default, and it applies to stand-alone LeakSanitizer only: under
+AddressSanitizer or HWAddressSanitizer the allocator, and its own double-free
+detection, come from that tool instead.
+
+Chunks served by the primary allocator keep their metadata mapped after they
+are freed, so the allocation stack and the first-free stack are stored inline
+in ChunkMetadata, which stays 16 bytes, and the check is a single
+compare-exchange that takes no lock.
+
+Chunks served by the secondary allocator are unmapped along with their
+metadata, so their stacks go into a side table instead. Validating such a
+chunk, copying its stacks into the table and unmapping it all happen under one
+mutex that every secondary allocation and free takes; without that, a
+concurrent free could unmap the metadata between another thread's validity
+check and its use. double_free_max_entries bounds that table and evicts the
+oldest entry.
+
+Validating the freed pointer is a prerequisite for the check, so while the
+option is enabled an invalid free is reported as a diagnostic instead of being
+handed to the allocator, which would otherwise dereference metadata that may
+not be mapped and fault inside the runtime. realloc() is checked the same way.
+
+The feature is disabled on macOS and NetBSD, where fork handling does not go
+through the LSan pthread_atfork hooks that protect the side table.
+
+Two pre-existing realloc() bugs found while writing the above are fixed first.
+CombinedAllocator::Reallocate() released the caller's chunk even when the
+replacement allocation could not be satisfied, and LSan's own Reallocate()
+unregistered the pointer before asking for that replacement, so a failing
+realloc() fired a free hook for a pointer the caller still owned and then
+re-registered it with a size that was never allocated.
+
+Assisted-by: Claude Opus 5
